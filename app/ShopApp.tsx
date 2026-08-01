@@ -65,6 +65,13 @@ async function rememberedFolder() {
   });
 }
 
+async function hasFolderPermission(folder: any, request = false) {
+  const options = { mode: "readwrite" };
+  if (await folder.queryPermission(options) === "granted") return true;
+  if (!request) return false;
+  return await folder.requestPermission(options) === "granted";
+}
+
 async function writeDataFile(folder: any, payments: Payment[], contacts: Record<string, string>, settings: AppSettings) {
   const fileHandle = await folder.getFileHandle("shopdesk-data.json", { create: true });
   const writable = await fileHandle.createWritable();
@@ -102,6 +109,7 @@ export default function ShopApp() {
   const [backupStatus, setBackupStatus] = useState("");
   const [dataFolder, setDataFolder] = useState<any>(null);
   const [folderStatus, setFolderStatus] = useState("Not connected");
+  const [folderNeedsPermission, setFolderNeedsPermission] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const now = new Date();
 
@@ -127,14 +135,20 @@ export default function ShopApp() {
       } catch { /* Ignore damaged browser data and start safely with empty records. */ }
       try {
         const folder = await rememberedFolder();
-        if (folder && await folder.queryPermission({ mode: "readwrite" }) === "granted") {
-          setDataFolder(folder); setFolderStatus("Connected — automatic file saving is on");
+        if (folder) {
+          setDataFolder(folder);
+          if (await hasFolderPermission(folder)) {
+          setFolderNeedsPermission(false); setFolderStatus("Connected — automatic file saving is on");
           const saved = await readDataFile(folder);
           if (saved) {
             setPayments(saved.payments); setContacts(saved.contacts);
             if (saved.settings) { const parsed = { ...defaultSettings, ...saved.settings }; setSettings(parsed); setReceiver(parsed.receiverNames[0]); localStorage.setItem("shopdeskSettings", JSON.stringify(saved.settings)); }
             localStorage.setItem("shopdeskPayments", JSON.stringify(saved.payments));
             localStorage.setItem("receiverContacts", JSON.stringify(saved.contacts));
+          }
+          } else {
+            setFolderNeedsPermission(true);
+            setFolderStatus("Folder remembered — click Reconnect saved folder and choose Allow on every visit");
           }
         }
       } catch { /* The local file remains safe even if browser permission needs renewal. */ }
@@ -172,13 +186,13 @@ export default function ShopApp() {
   function savePayments(next: Payment[]) {
     setPayments(next);
     localStorage.setItem("shopdeskPayments", JSON.stringify(next));
-    if (dataFolder) void writeDataFile(dataFolder, next, contacts, settings).catch(() => setFolderStatus("Folder permission required — reconnect it in Settings"));
+    if (dataFolder) void writeDataFile(dataFolder, next, contacts, settings).catch(() => { setFolderNeedsPermission(true); setFolderStatus("Folder permission required — reconnect it in Data Management"); });
   }
 
   function saveContacts(next: Record<string, string>) {
     setContacts(next);
     localStorage.setItem("receiverContacts", JSON.stringify(next));
-    if (dataFolder) void writeDataFile(dataFolder, payments, next, settings).catch(() => setFolderStatus("Folder permission required — reconnect it in Settings"));
+    if (dataFolder) void writeDataFile(dataFolder, payments, next, settings).catch(() => { setFolderNeedsPermission(true); setFolderStatus("Folder permission required — reconnect it in Data Management"); });
   }
 
   function saveSettings(next: AppSettings) {
@@ -191,7 +205,7 @@ export default function ShopApp() {
     setSettings(next); setContacts(nextContacts);
     localStorage.setItem("shopdeskSettings", JSON.stringify(next));
     localStorage.setItem("receiverContacts", JSON.stringify(nextContacts));
-    if (dataFolder) void writeDataFile(dataFolder, payments, nextContacts, next).catch(() => setFolderStatus("Folder permission required — reconnect it in Settings"));
+    if (dataFolder) void writeDataFile(dataFolder, payments, nextContacts, next).catch(() => { setFolderNeedsPermission(true); setFolderStatus("Folder permission required — reconnect it in Data Management"); });
   }
 
   function recordAndSend(number: string) {
@@ -271,21 +285,52 @@ export default function ShopApp() {
       const verified = await readDataFile(folder);
       if (!verified) throw new Error("File verification failed");
       await rememberFolder(folder);
-      setDataFolder(folder); setFolderStatus("Saved successfully: ShopDesk Data/shopdesk-data.json");
+      setDataFolder(folder); setFolderNeedsPermission(false); setFolderStatus("Connected — automatic file saving is on");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setFolderStatus("Could not access that folder. Please try again.");
     }
   }
 
+  async function reconnectLocalFolder() {
+    if (!dataFolder) { await connectLocalFolder(); return; }
+    try {
+      if (!await hasFolderPermission(dataFolder, true)) {
+        setFolderNeedsPermission(true);
+        setFolderStatus("Permission was not granted. Click Reconnect and allow folder access.");
+        return;
+      }
+      const saved = await readDataFile(dataFolder);
+      if (saved) {
+        setPayments(saved.payments); setContacts(saved.contacts);
+        localStorage.setItem("shopdeskPayments", JSON.stringify(saved.payments));
+        localStorage.setItem("receiverContacts", JSON.stringify(saved.contacts));
+        if (saved.settings) {
+          const restored = { ...defaultSettings, ...saved.settings };
+          setSettings(restored); setReceiver(restored.receiverNames[0]);
+          localStorage.setItem("shopdeskSettings", JSON.stringify(restored));
+        }
+      }
+      await rememberFolder(dataFolder);
+      setFolderNeedsPermission(false);
+      setFolderStatus("Connected — automatic file saving is on");
+    } catch {
+      setFolderNeedsPermission(true);
+      setFolderStatus("Could not restore folder access. Choose the folder again.");
+    }
+  }
+
   async function saveFileNow() {
     if (!dataFolder) { await connectLocalFolder(); return; }
     try {
+      if (!await hasFolderPermission(dataFolder, true)) {
+        setFolderNeedsPermission(true); setFolderStatus("Permission is required before saving."); return;
+      }
       await writeDataFile(dataFolder, payments, contacts, settings);
       const verified = await readDataFile(dataFolder);
       if (!verified) throw new Error("File verification failed");
-      setFolderStatus(`Saved to shopdesk-data.json at ${formatTime(new Date().toISOString())}`);
-    } catch { setFolderStatus("Could not write the file. Reconnect the folder and allow access."); }
+      setFolderNeedsPermission(false); setFolderStatus(`Saved to shopdesk-data.json at ${formatTime(new Date().toISOString())}`);
+    } catch { setFolderNeedsPermission(true); setFolderStatus("Could not write the file. Reconnect the folder and allow access."); }
   }
 
   const nav = [
@@ -342,7 +387,7 @@ export default function ShopApp() {
         <Back onClick={() => setView("dashboard")}/>
         <div className="page-heading"><div><p className="eyebrow blue">LOCAL STORAGE</p><h2>Data Management</h2><p>Manage your live data file, backups, and restoration.</p></div></div>
         <div className="panel settings-stack">
-          <div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Open this site directly in <b>Microsoft Edge or Google Chrome</b>, then choose a parent folder. ShopDesk creates <b>ShopDesk Data/shopdesk-data.json</b> and saves every change there.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button><button className="secondary" onClick={saveFileNow}>Save data file now</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div>
+          <div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Open this site directly in <b>Microsoft Edge or Google Chrome</b>, then choose a parent folder. ShopDesk creates <b>ShopDesk Data/shopdesk-data.json</b> and saves every change there. When prompted, choose <b>Allow on every visit</b> to keep access after restarting the browser.</p><div className="backup-actions"><button className="secondary" onClick={folderNeedsPermission ? reconnectLocalFolder : connectLocalFolder}>{folderNeedsPermission ? "Reconnect saved folder" : dataFolder ? "Change folder" : "Choose local folder"}</button>{folderNeedsPermission && <button className="secondary" onClick={connectLocalFolder}>Choose another folder</button>}<button className="secondary" onClick={saveFileNow}>Save data file now</button></div><span className={dataFolder && !folderNeedsPermission ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div>
           <div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>Download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div>
         </div>
       </section>}
