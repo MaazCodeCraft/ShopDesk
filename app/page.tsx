@@ -35,25 +35,32 @@ export default function Home() {
   const [domicilePhone, setDomicilePhone] = useState("");
   const [domicileError, setDomicileError] = useState("");
   const [search, setSearch] = useState("");
+  const [backupStatus, setBackupStatus] = useState("");
   const now = new Date();
 
   useEffect(() => {
-    const saved = localStorage.getItem("receiverContacts");
-    if (saved) setContacts(JSON.parse(saved));
-    fetch("/api/payments").then(r => r.ok ? r.json() : Promise.reject()).then(d => setPayments(d.payments ?? [])).catch(() => {}).finally(() => setLoading(false));
+    try {
+      const savedContacts = localStorage.getItem("receiverContacts");
+      const savedPayments = localStorage.getItem("shopdeskPayments");
+      if (savedContacts) setContacts(JSON.parse(savedContacts));
+      if (savedPayments) setPayments(JSON.parse(savedPayments));
+    } catch { /* Ignore damaged browser data and start safely with empty records. */ }
+    setLoading(false);
   }, []);
 
   const totalToday = payments.filter(p => new Date(p.createdAt).toDateString() === now.toDateString()).reduce((s, p) => s + p.amount, 0);
   const totalMonth = payments.filter(p => { const d = new Date(p.createdAt); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).reduce((s, p) => s + p.amount, 0);
   const filtered = useMemo(() => payments.filter(p => `${p.receiver} ${p.note} ${p.amount}`.toLowerCase().includes(search.toLowerCase())), [payments, search]);
 
-  async function recordAndSend(number: string) {
+  function savePayments(next: Payment[]) {
+    setPayments(next);
+    localStorage.setItem("shopdeskPayments", JSON.stringify(next));
+  }
+
+  function recordAndSend(number: string) {
     const createdAt = new Date().toISOString();
     const payload = { amount: Number(amount), receiver, note: note.trim(), createdAt };
-    try {
-      const res = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (res.ok) { const data = await res.json(); setPayments(p => [data.payment, ...p]); }
-    } catch { setPayments(p => [{ id: Date.now(), ...payload }, ...p]); }
+    savePayments([{ id: Date.now(), ...payload }, ...payments]);
     const message = `ادائیگی کی تصدیق\n\nالسلام علیکم،\n\nآج بجلی کی مد میں ${Number(amount).toLocaleString("en-PK")} روپے ادا کر دیے گئے ہیں۔\n\nوصول کنندہ: ${receiverUrdu[receiver]}\n\nتاریخ: ${formatDate(createdAt, true)}\n\nوقت: ${formatTime(createdAt)}${note.trim() ? `\n\nنوٹ: ${note.trim()}` : ""}\n\nشکریہ۔`;
     setContactPrompt(false); setAmount(""); setNote("");
     window.location.href = smsLink(number, message);
@@ -78,6 +85,34 @@ export default function Home() {
     if (!validPhone(domicilePhone)) { setDomicileError("Enter a valid Pakistani mobile number"); return; }
     const message = "السلام علیکم،\n\nآپ کا ڈومیسائل تیار ہو چکا ہے۔\n\nبراہِ کرم ہماری دکان پر تشریف لا کر اپنا ڈومیسائل وصول کریں۔\n\nشکریہ۔";
     window.location.href = smsLink(domicilePhone, message);
+  }
+
+  function downloadBackup() {
+    const backup = { version: 1, exportedAt: new Date().toISOString(), payments, contacts };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `shopdesk-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setBackupStatus("Backup downloaded successfully.");
+  }
+
+  function restoreBackup(file: File | undefined) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result)) as { payments?: Payment[]; contacts?: Record<string, string> };
+        if (!Array.isArray(data.payments) || !data.contacts) throw new Error();
+        setPayments(data.payments);
+        setContacts(data.contacts);
+        localStorage.setItem("shopdeskPayments", JSON.stringify(data.payments));
+        localStorage.setItem("receiverContacts", JSON.stringify(data.contacts));
+        setBackupStatus("Backup restored successfully.");
+      } catch { setBackupStatus("That backup file is not valid."); }
+    };
+    reader.readAsText(file);
   }
 
   const nav = [
@@ -123,7 +158,7 @@ export default function Home() {
 
       {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map(r => <label key={r}><span><b>{r}</b><small>{receiverUrdu[r]}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => { const next={...contacts,[r]:e.target.value}; setContacts(next); localStorage.setItem("receiverContacts", JSON.stringify(next)); }}/></label>)}</div></section>}
 
-      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">PREFERENCES</p><h2>Settings</h2><p>Simple, reliable, and ready for your daily work.</p></div></div><div className="panel setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></section>}
+      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">LOCAL DATA</p><h2>Settings & Backup</h2><p>Your records stay on this computer in this browser.</p></div></div><div className="panel settings-stack"><div className="setting-card"><span className="hero-icon green-bg">⌂</span><div><h3>Saved locally on this device</h3><p>Payments and contacts are not uploaded to GitHub or an online database. Use the same browser profile to access them.</p></div></div><div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Backup your records</h3><p>Download a backup regularly. You can restore it if you change browsers or computers.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div><div className="setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></div></section>}
     </main>
 
     {contactPrompt && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form className="modal" onSubmit={confirmPhone}><button type="button" className="close" onClick={() => setContactPrompt(false)}>×</button><span className="hero-icon blue-bg">♙</span><p className="eyebrow blue">ONE-TIME SETUP</p><h2 id="contact-title">Enter contact number</h2><p>Add the number for <b>{receiver}</b>. We&apos;ll save it on this device.</p><label>Contact Number <i>*</i><input autoFocus type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={phone} onChange={e => { setPhone(e.target.value); setPhoneError(""); }}/>{phoneError && <span className="error">{phoneError}</span>}</label><button className="primary" type="submit">Save & Continue <span>→</span></button></form></div>}
