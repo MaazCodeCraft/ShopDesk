@@ -166,6 +166,7 @@ export default function ShopApp() {
   const totalMonth = payments.filter(p => { const d = new Date(p.createdAt); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).reduce((s, p) => s + p.amount, 0);
   const filtered = useMemo(() => payments.filter(p => `${p.receiver} ${p.note} ${p.amount}`.toLowerCase().includes(search.toLowerCase())), [payments, search]);
   const receivers = settings.receiverNames;
+  const ownerPhone = contacts.__owner ?? contacts[receivers[0]] ?? "";
 
   function savePayments(next: Payment[]) {
     setPayments(next);
@@ -204,14 +205,14 @@ export default function ShopApp() {
   function submitPayment(e: FormEvent) {
     e.preventDefault();
     if (!amount || Number(amount) <= 0) return;
-    if (contacts[receiver]) recordAndSend(contacts[receiver]);
+    if (ownerPhone) recordAndSend(ownerPhone);
     else { setPhone(""); setPhoneError(""); setContactPrompt(true); }
   }
 
   function confirmPhone(e: FormEvent) {
     e.preventDefault();
     if (!validPhone(phone)) { setPhoneError("Enter a valid Pakistani mobile number"); return; }
-    const next = { ...contacts, [receiver]: phone };
+    const next = { __owner: phone };
     saveContacts(next); recordAndSend(phone);
   }
 
@@ -330,7 +331,7 @@ export default function ShopApp() {
 
       {view === "history" && <section className="content"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">PAYMENT RECORDS</p><h2>Payment History</h2><p>Search and review all electricity payments.</p></div><div className="total-pill"><small>Total paid</small><b>Rs. {payments.reduce((s,p) => s + p.amount, 0).toLocaleString()}</b></div></div><div className="panel history-panel"><div className="search"><span>⌕</span><input aria-label="Search payments" placeholder="Search by receiver, note or amount..." value={search} onChange={e => setSearch(e.target.value)}/></div><PaymentTable payments={filtered} loading={loading}/></div></section>}
 
-      {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map((r, index) => <label key={`${index}-${r}`}><span><b>{r}</b><small>Receiver {index + 1}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => saveContacts({...contacts,[r]:e.target.value})}/></label>)}</div></section>}
+      {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">OWNER NUMBER</p><h2>Receiver Contact</h2><p>All payment confirmations—including payments received by sons—are sent to the owner.</p></div></div><div className="panel contact-list"><label><span><b>{receivers[0]}</b><small>Owner · Primary SMS contact</small></span><input type="tel" placeholder="03XX XXXXXXX" value={ownerPhone} onChange={e => saveContacts({__owner:e.target.value})}/></label></div></section>}
 
       {view === "data" && <section className="content narrow">
         <Back onClick={() => setView("dashboard")}/>
@@ -357,7 +358,7 @@ export default function ShopApp() {
       </section>}
     </main>
 
-    {contactPrompt && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form className="modal" onSubmit={confirmPhone}><button type="button" className="close" onClick={() => setContactPrompt(false)}>×</button><span className="hero-icon blue-bg">♙</span><p className="eyebrow blue">ONE-TIME SETUP</p><h2 id="contact-title">Enter contact number</h2><p>Add the number for <b>{receiver}</b>. We&apos;ll save it on this device.</p><label>Contact Number <i>*</i><input autoFocus type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={phone} onChange={e => { setPhone(e.target.value); setPhoneError(""); }}/>{phoneError && <span className="error">{phoneError}</span>}</label><button className="primary" type="submit">Save & Continue <span>→</span></button></form></div>}
+    {contactPrompt && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form className="modal" onSubmit={confirmPhone}><button type="button" className="close" onClick={() => setContactPrompt(false)}>×</button><span className="hero-icon blue-bg">♙</span><p className="eyebrow blue">ONE-TIME SETUP</p><h2 id="contact-title">Enter owner&apos;s number</h2><p>All payment confirmations will be sent to the owner, even when a son receives the payment.</p><label>Owner Contact Number <i>*</i><input autoFocus type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={phone} onChange={e => { setPhone(e.target.value); setPhoneError(""); }}/>{phoneError && <span className="error">{phoneError}</span>}</label><button className="primary" type="submit">Save & Continue <span>→</span></button></form></div>}
   </div>;
 }
 
