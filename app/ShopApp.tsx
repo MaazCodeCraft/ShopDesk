@@ -20,6 +20,15 @@ function formatTime(value: string) {
 
 function validPhone(value: string) { return /^(?:\+92|0092|0)?3\d{9}$/.test(value.replace(/[\s-]/g, "")); }
 function smsLink(phone: string, body: string) { return `sms:${phone.replace(/[\s-]/g, "")}?body=${encodeURIComponent(body)}`; }
+const LOGIN_EMAIL_HASH = "8e805a8d8310fb35206ef83a6681ffff30f36f4d19f8990aa180fb74feb7245b";
+const LOGIN_PASSWORD_HASH = "2c1f0b6ab194b4c93d8885461394d461bdb81bb736d1af9412d2f66ce69ccea3";
+const LOGIN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function hashCredential(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
 
 type ShopData = { version: number; updatedAt: string; payments: Payment[]; contacts: Record<string, string> };
 
@@ -62,7 +71,12 @@ async function readDataFile(folder: any): Promise<ShopData | null> {
   } catch { return null; }
 }
 
-export default function ShopApp({ userName, userEmail }: { userName: string; userEmail: string }) {
+export default function ShopApp() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [view, setView] = useState<View>("dashboard");
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +96,13 @@ export default function ShopApp({ userName, userEmail }: { userName: string; use
   const now = new Date();
 
   useEffect(() => {
+    let loginIsValid = false;
+    try {
+      const savedLogin = JSON.parse(localStorage.getItem("shopdesk-login") ?? "null") as { expiresAt?: number } | null;
+      if (savedLogin?.expiresAt && savedLogin.expiresAt > Date.now()) loginIsValid = true;
+      else localStorage.removeItem("shopdesk-login");
+    } catch { localStorage.removeItem("shopdesk-login"); }
+    setAuthenticated(loginIsValid);
     void (async () => {
       let cachedPayments: Payment[] = [];
       let cachedContacts: Record<string, string> = {};
@@ -107,6 +128,26 @@ export default function ShopApp({ userName, userEmail }: { userName: string; use
       setLoading(false);
     })();
   }, []);
+
+  async function login(e: FormEvent) {
+    e.preventDefault();
+    setLoginError("");
+    const [emailHash, passwordHash] = await Promise.all([
+      hashCredential(loginEmail.trim().toLowerCase()),
+      hashCredential(loginPassword),
+    ]);
+    if (emailHash !== LOGIN_EMAIL_HASH || passwordHash !== LOGIN_PASSWORD_HASH) {
+      setLoginError("Email or password is incorrect.");
+      return;
+    }
+    localStorage.setItem("shopdesk-login", JSON.stringify({ expiresAt: Date.now() + LOGIN_DURATION_MS }));
+    setLoginPassword(""); setAuthenticated(true);
+  }
+
+  function logout() {
+    localStorage.removeItem("shopdesk-login");
+    setAuthenticated(false); setLoginEmail(""); setLoginPassword("");
+  }
 
   const totalToday = payments.filter(p => new Date(p.createdAt).toDateString() === now.toDateString()).reduce((s, p) => s + p.amount, 0);
   const totalMonth = payments.filter(p => { const d = new Date(p.createdAt); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).reduce((s, p) => s + p.amount, 0);
@@ -195,18 +236,33 @@ export default function ShopApp({ userName, userEmail }: { userName: string; use
         localStorage.setItem("shopdeskPayments", JSON.stringify(existing.payments));
         localStorage.setItem("receiverContacts", JSON.stringify(existing.contacts));
       } else await writeDataFile(folder, payments, contacts);
+      const verified = await readDataFile(folder);
+      if (!verified) throw new Error("File verification failed");
       await rememberFolder(folder);
-      setDataFolder(folder); setFolderStatus("Connected — automatic file saving is on");
+      setDataFolder(folder); setFolderStatus("Saved successfully: ShopDesk Data/shopdesk-data.json");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setFolderStatus("Could not access that folder. Please try again.");
     }
   }
 
+  async function saveFileNow() {
+    if (!dataFolder) { await connectLocalFolder(); return; }
+    try {
+      await writeDataFile(dataFolder, payments, contacts);
+      const verified = await readDataFile(dataFolder);
+      if (!verified) throw new Error("File verification failed");
+      setFolderStatus(`Saved to shopdesk-data.json at ${formatTime(new Date().toISOString())}`);
+    } catch { setFolderStatus("Could not write the file. Reconnect the folder and allow access."); }
+  }
+
   const nav = [
     ["dashboard", "⌂", "Dashboard"], ["payment", "ϟ", "Electricity Payment"], ["domicile", "▤", "Domicile Notification"],
     ["history", "▧", "Payment History"], ["contacts", "♙", "Contacts"], ["settings", "⚙", "Settings"]
   ] as const;
+
+  if (authenticated === null) return <main className="auth-loading" aria-label="Checking login"><div className="auth-loading-mark">⌁</div><b>ShopDesk</b><span className="auth-spinner" aria-hidden="true"/></main>;
+  if (!authenticated) return <main className="login-page"><section className="login-visual"><div className="login-brand"><span className="brand-mark">⌁</span><span>Photostat &<br/>Printing Shop</span></div><div><p className="eyebrow">SHOP MANAGEMENT</p><h1>Simple records.<br/><em>Safer access.</em></h1><p>Electricity payments, customer notifications, and your local shop data—all in one place.</p></div><small>ShopDesk · Local-first management</small></section><section className="login-side"><form className="login-card" onSubmit={login}><span className="login-lock">⌾</span><p className="eyebrow blue">WELCOME BACK</p><h2>Sign in to ShopDesk</h2><p>Enter your account details to continue.</p><label>Email address<input type="email" autoComplete="username" required placeholder="you@example.com" value={loginEmail} onChange={e => { setLoginEmail(e.target.value); setLoginError(""); }}/></label><label>Password<div className="password-input"><input type={showPassword ? "text" : "password"} autoComplete="current-password" required placeholder="Enter your password" value={loginPassword} onChange={e => { setLoginPassword(e.target.value); setLoginError(""); }}/><button type="button" onClick={() => setShowPassword(v => !v)}>{showPassword ? "Hide" : "Show"}</button></div></label>{loginError && <div className="login-error" role="alert">{loginError}</div>}<button className="primary" type="submit">Sign in <span>→</span></button><small className="secure-note">Login stays active for 7 days on this browser. Credentials are never sent online.</small></form></section></main>;
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -216,7 +272,7 @@ export default function ShopApp({ userName, userEmail }: { userName: string; use
     </aside>
 
     <main>
-      <header><button className="menu" aria-label="Menu">☰</button><div><p className="eyebrow">PHOTOSTAT & PRINTING SHOP</p><h1>{nav.find(n => n[0] === view)?.[2]}</h1></div><div className="clock"><b>{formatTime(now.toISOString())}</b><span>{formatDate(now.toISOString())}</span></div><div className="account"><span className="avatar">{userName.charAt(0).toUpperCase()}</span><span className="account-copy"><b>{userName}</b><small>{userEmail}</small></span><a href="/signout-with-chatgpt?return_to=/" className="logout">Log out</a></div></header>
+      <header><button className="menu" aria-label="Menu">☰</button><div><p className="eyebrow">PHOTOSTAT & PRINTING SHOP</p><h1>{nav.find(n => n[0] === view)?.[2]}</h1></div><div className="clock"><b>{formatTime(now.toISOString())}</b><span>{formatDate(now.toISOString())}</span></div><div className="account"><span className="avatar">A</span><span className="account-copy"><b>Shop Admin</b><small>Signed in locally</small></span><button type="button" className="logout" onClick={logout}>Log out</button></div></header>
 
       {view === "dashboard" && <section className="content dashboard">
         <div className="welcome"><div><p className="eyebrow blue">DAILY OPERATIONS</p><h2>Everything you need,<br/><em>right at hand.</em></h2><p>Record electricity payments and notify customers in just a few clicks.</p></div><div className="date-chip"><span>{now.toLocaleDateString("en-PK", { weekday: "long" })}</span><strong>{now.getDate()}</strong><small>{now.toLocaleDateString("en-PK", { month: "long", year: "numeric" })}</small></div></div>
@@ -246,7 +302,7 @@ export default function ShopApp({ userName, userEmail }: { userName: string; use
 
       {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map(r => <label key={r}><span><b>{r}</b><small>{receiverUrdu[r]}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => saveContacts({...contacts,[r]:e.target.value})}/></label>)}</div></section>}
 
-      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">LOCAL DATA</p><h2>Settings & Backup</h2><p>Keep your records in a real folder on your Windows computer.</p></div></div><div className="panel settings-stack"><div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Choose a folder and ShopDesk will create <b>ShopDesk Data/shopdesk-data.json</b> inside it. Every payment and contact change is saved there automatically.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div><div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>You can also download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div><div className="setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></div></section>}
+      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">LOCAL DATA</p><h2>Settings & Backup</h2><p>Keep your records in a real folder on your Windows computer.</p></div></div><div className="panel settings-stack"><div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Open this site directly in <b>Microsoft Edge or Google Chrome</b>, then choose a parent folder. ShopDesk creates <b>ShopDesk Data/shopdesk-data.json</b> and saves every change there.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button><button className="secondary" onClick={saveFileNow}>Save data file now</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div><div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>You can also download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div><div className="setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></div></section>}
     </main>
 
     {contactPrompt && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form className="modal" onSubmit={confirmPhone}><button type="button" className="close" onClick={() => setContactPrompt(false)}>×</button><span className="hero-icon blue-bg">♙</span><p className="eyebrow blue">ONE-TIME SETUP</p><h2 id="contact-title">Enter contact number</h2><p>Add the number for <b>{receiver}</b>. We&apos;ll save it on this device.</p><label>Contact Number <i>*</i><input autoFocus type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={phone} onChange={e => { setPhone(e.target.value); setPhoneError(""); }}/>{phoneError && <span className="error">{phoneError}</span>}</label><button className="primary" type="submit">Save & Continue <span>→</span></button></form></div>}
