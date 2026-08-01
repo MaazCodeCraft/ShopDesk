@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type View = "dashboard" | "payment" | "domicile" | "history" | "contacts" | "settings";
+type View = "dashboard" | "payment" | "domicile" | "history" | "contacts" | "data" | "settings";
 type Payment = { id: number; amount: number; receiver: string; note: string; createdAt: string };
 
 type AppSettings = { shopName: string; dailyRate: number; receiverNames: string[]; paymentSms: string; domicileSms: string };
@@ -288,7 +288,7 @@ export default function ShopApp() {
 
   const nav = [
     ["dashboard", "⌂", "Dashboard"], ["payment", "ϟ", "Electricity Payment"], ["domicile", "▤", "Domicile Notification"],
-    ["history", "▧", "Payment History"], ["contacts", "♙", "Contacts"], ["settings", "⚙", "Settings"]
+    ["history", "▧", "Payment History"], ["contacts", "♙", "Contacts"], ["data", "⇩", "Data Management"], ["settings", "⚙", "Settings"]
   ] as const;
 
   if (authenticated === null) return <main className="auth-loading" aria-label="Checking login"><div className="auth-loading-mark">⌁</div><b>ShopDesk</b><span className="auth-spinner" aria-hidden="true"/></main>;
@@ -332,9 +332,18 @@ export default function ShopApp() {
 
       {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map((r, index) => <label key={`${index}-${r}`}><span><b>{r}</b><small>Receiver {index + 1}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => saveContacts({...contacts,[r]:e.target.value})}/></label>)}</div></section>}
 
+      {view === "data" && <section className="content narrow">
+        <Back onClick={() => setView("dashboard")}/>
+        <div className="page-heading"><div><p className="eyebrow blue">LOCAL STORAGE</p><h2>Data Management</h2><p>Manage your live data file, backups, and restoration.</p></div></div>
+        <div className="panel settings-stack">
+          <div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Open this site directly in <b>Microsoft Edge or Google Chrome</b>, then choose a parent folder. ShopDesk creates <b>ShopDesk Data/shopdesk-data.json</b> and saves every change there.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button><button className="secondary" onClick={saveFileNow}>Save data file now</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div>
+          <div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>Download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div>
+        </div>
+      </section>}
+
       {view === "settings" && <section className="content narrow">
         <Back onClick={() => setView("dashboard")}/>
-        <div className="page-heading"><div><p className="eyebrow blue">CUSTOMIZE SHOPDESK</p><h2>Settings & Backup</h2><p>Change shop details, receiver names, messages, and storage.</p></div></div>
+        <div className="page-heading"><div><p className="eyebrow blue">CUSTOMIZE SHOPDESK</p><h2>Settings</h2><p>Change shop details, receiver names, and message templates.</p></div></div>
         <div className="panel settings-stack">
           <div className="setting-card customization-card"><span className="hero-icon blue-bg">⚙</span><div className="settings-fields">
             <h3>Shop details</h3><div className="settings-grid"><label>Shop name<input value={settings.shopName} onChange={e => saveSettings({...settings, shopName:e.target.value})}/></label><label>Daily electricity rate (Rs.)<input type="number" min="1" value={settings.dailyRate} onChange={e => saveSettings({...settings, dailyRate:Number(e.target.value) || 0})}/></label></div>
@@ -344,8 +353,6 @@ export default function ShopApp() {
             <p className="template-help">Domicile placeholder: <code>{'{shop}'}</code></p><label>Domicile notification SMS<textarea dir="rtl" rows={7} value={settings.domicileSms} onChange={e=>saveSettings({...settings,domicileSms:e.target.value})}/></label>
             <button className="secondary reset-button" onClick={()=>saveSettings(defaultSettings)}>Restore default settings</button>
           </div></div>
-          <div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Open this site directly in <b>Microsoft Edge or Google Chrome</b>, then choose a parent folder. ShopDesk creates <b>ShopDesk Data/shopdesk-data.json</b> and saves every change there.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button><button className="secondary" onClick={saveFileNow}>Save data file now</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div>
-          <div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>Download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div>
         </div>
       </section>}
     </main>
