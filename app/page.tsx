@@ -21,6 +21,47 @@ function formatTime(value: string) {
 function validPhone(value: string) { return /^(?:\+92|0092|0)?3\d{9}$/.test(value.replace(/[\s-]/g, "")); }
 function smsLink(phone: string, body: string) { return `sms:${phone.replace(/[\s-]/g, "")}?body=${encodeURIComponent(body)}`; }
 
+type ShopData = { version: number; updatedAt: string; payments: Payment[]; contacts: Record<string, string> };
+
+function handleDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("shopdesk-file-storage", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("handles");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function rememberFolder(handle: unknown) {
+  const db = await handleDatabase();
+  const transaction = db.transaction("handles", "readwrite");
+  transaction.objectStore("handles").put(handle, "dataFolder");
+}
+
+async function rememberedFolder() {
+  const db = await handleDatabase();
+  return new Promise<any>((resolve) => {
+    const request = db.transaction("handles").objectStore("handles").get("dataFolder");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function writeDataFile(folder: any, payments: Payment[], contacts: Record<string, string>) {
+  const fileHandle = await folder.getFileHandle("shopdesk-data.json", { create: true });
+  const writable = await fileHandle.createWritable();
+  const data: ShopData = { version: 1, updatedAt: new Date().toISOString(), payments, contacts };
+  await writable.write(JSON.stringify(data, null, 2));
+  await writable.close();
+}
+
+async function readDataFile(folder: any): Promise<ShopData | null> {
+  try {
+    const fileHandle = await folder.getFileHandle("shopdesk-data.json");
+    return JSON.parse(await (await fileHandle.getFile()).text()) as ShopData;
+  } catch { return null; }
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -36,16 +77,35 @@ export default function Home() {
   const [domicileError, setDomicileError] = useState("");
   const [search, setSearch] = useState("");
   const [backupStatus, setBackupStatus] = useState("");
+  const [dataFolder, setDataFolder] = useState<any>(null);
+  const [folderStatus, setFolderStatus] = useState("Not connected");
   const now = new Date();
 
   useEffect(() => {
-    try {
+    void (async () => {
+      let cachedPayments: Payment[] = [];
+      let cachedContacts: Record<string, string> = {};
+      try {
       const savedContacts = localStorage.getItem("receiverContacts");
       const savedPayments = localStorage.getItem("shopdeskPayments");
-      if (savedContacts) setContacts(JSON.parse(savedContacts));
-      if (savedPayments) setPayments(JSON.parse(savedPayments));
-    } catch { /* Ignore damaged browser data and start safely with empty records. */ }
-    setLoading(false);
+        if (savedContacts) cachedContacts = JSON.parse(savedContacts);
+        if (savedPayments) cachedPayments = JSON.parse(savedPayments);
+        setContacts(cachedContacts); setPayments(cachedPayments);
+      } catch { /* Ignore damaged browser data and start safely with empty records. */ }
+      try {
+        const folder = await rememberedFolder();
+        if (folder && await folder.queryPermission({ mode: "readwrite" }) === "granted") {
+          setDataFolder(folder); setFolderStatus("Connected — automatic file saving is on");
+          const saved = await readDataFile(folder);
+          if (saved) {
+            setPayments(saved.payments); setContacts(saved.contacts);
+            localStorage.setItem("shopdeskPayments", JSON.stringify(saved.payments));
+            localStorage.setItem("receiverContacts", JSON.stringify(saved.contacts));
+          }
+        }
+      } catch { /* The local file remains safe even if browser permission needs renewal. */ }
+      setLoading(false);
+    })();
   }, []);
 
   const totalToday = payments.filter(p => new Date(p.createdAt).toDateString() === now.toDateString()).reduce((s, p) => s + p.amount, 0);
@@ -55,6 +115,13 @@ export default function Home() {
   function savePayments(next: Payment[]) {
     setPayments(next);
     localStorage.setItem("shopdeskPayments", JSON.stringify(next));
+    if (dataFolder) void writeDataFile(dataFolder, next, contacts).catch(() => setFolderStatus("Folder permission required — reconnect it in Settings"));
+  }
+
+  function saveContacts(next: Record<string, string>) {
+    setContacts(next);
+    localStorage.setItem("receiverContacts", JSON.stringify(next));
+    if (dataFolder) void writeDataFile(dataFolder, payments, next).catch(() => setFolderStatus("Folder permission required — reconnect it in Settings"));
   }
 
   function recordAndSend(number: string) {
@@ -77,7 +144,7 @@ export default function Home() {
     e.preventDefault();
     if (!validPhone(phone)) { setPhoneError("Enter a valid Pakistani mobile number"); return; }
     const next = { ...contacts, [receiver]: phone };
-    setContacts(next); localStorage.setItem("receiverContacts", JSON.stringify(next)); recordAndSend(phone);
+    saveContacts(next); recordAndSend(phone);
   }
 
   function sendDomicile(e: FormEvent) {
@@ -109,10 +176,31 @@ export default function Home() {
         setContacts(data.contacts);
         localStorage.setItem("shopdeskPayments", JSON.stringify(data.payments));
         localStorage.setItem("receiverContacts", JSON.stringify(data.contacts));
+        if (dataFolder) void writeDataFile(dataFolder, data.payments, data.contacts);
         setBackupStatus("Backup restored successfully.");
       } catch { setBackupStatus("That backup file is not valid."); }
     };
     reader.readAsText(file);
+  }
+
+  async function connectLocalFolder() {
+    const fileWindow = window as unknown as { showDirectoryPicker?: (options?: object) => Promise<any> };
+    if (!fileWindow.showDirectoryPicker) { setFolderStatus("Use Microsoft Edge or Google Chrome to save directly to a folder"); return; }
+    try {
+      const chosen = await fileWindow.showDirectoryPicker({ mode: "readwrite" });
+      const folder = await chosen.getDirectoryHandle("ShopDesk Data", { create: true });
+      const existing = await readDataFile(folder);
+      if (existing?.payments && existing.contacts) {
+        setPayments(existing.payments); setContacts(existing.contacts);
+        localStorage.setItem("shopdeskPayments", JSON.stringify(existing.payments));
+        localStorage.setItem("receiverContacts", JSON.stringify(existing.contacts));
+      } else await writeDataFile(folder, payments, contacts);
+      await rememberFolder(folder);
+      setDataFolder(folder); setFolderStatus("Connected — automatic file saving is on");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setFolderStatus("Could not access that folder. Please try again.");
+    }
   }
 
   const nav = [
@@ -156,9 +244,9 @@ export default function Home() {
 
       {view === "history" && <section className="content"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">PAYMENT RECORDS</p><h2>Payment History</h2><p>Search and review all electricity payments.</p></div><div className="total-pill"><small>Total paid</small><b>Rs. {payments.reduce((s,p) => s + p.amount, 0).toLocaleString()}</b></div></div><div className="panel history-panel"><div className="search"><span>⌕</span><input aria-label="Search payments" placeholder="Search by receiver, note or amount..." value={search} onChange={e => setSearch(e.target.value)}/></div><PaymentTable payments={filtered} loading={loading}/></div></section>}
 
-      {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map(r => <label key={r}><span><b>{r}</b><small>{receiverUrdu[r]}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => { const next={...contacts,[r]:e.target.value}; setContacts(next); localStorage.setItem("receiverContacts", JSON.stringify(next)); }}/></label>)}</div></section>}
+      {view === "contacts" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">SAVED NUMBERS</p><h2>Receiver Contacts</h2><p>Numbers are saved on this device for faster payments.</p></div></div><div className="panel contact-list">{receivers.map(r => <label key={r}><span><b>{r}</b><small>{receiverUrdu[r]}</small></span><input type="tel" placeholder="03XX XXXXXXX" value={contacts[r] ?? ""} onChange={e => saveContacts({...contacts,[r]:e.target.value})}/></label>)}</div></section>}
 
-      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">LOCAL DATA</p><h2>Settings & Backup</h2><p>Your records stay on this computer in this browser.</p></div></div><div className="panel settings-stack"><div className="setting-card"><span className="hero-icon green-bg">⌂</span><div><h3>Saved locally on this device</h3><p>Payments and contacts are not uploaded to GitHub or an online database. Use the same browser profile to access them.</p></div></div><div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Backup your records</h3><p>Download a backup regularly. You can restore it if you change browsers or computers.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div><div className="setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></div></section>}
+      {view === "settings" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="page-heading"><div><p className="eyebrow blue">LOCAL DATA</p><h2>Settings & Backup</h2><p>Keep your records in a real folder on your Windows computer.</p></div></div><div className="panel settings-stack"><div className="setting-card folder-card"><span className="hero-icon green-bg">⌂</span><div><h3>Local data folder</h3><p>Choose a folder and ShopDesk will create <b>ShopDesk Data/shopdesk-data.json</b> inside it. Every payment and contact change is saved there automatically.</p><div className="backup-actions"><button className="secondary" onClick={connectLocalFolder}>{dataFolder ? "Change folder" : "Choose local folder"}</button></div><span className={dataFolder ? "backup-status" : "folder-status"}>{folderStatus}</span></div></div><div className="setting-card backup-card"><span className="hero-icon blue-bg">↓</span><div><h3>Portable backup</h3><p>You can also download a separate backup or restore one on another computer.</p><div className="backup-actions"><button className="secondary" onClick={downloadBackup}>Download backup</button><label className="upload-button">Restore backup<input type="file" accept="application/json,.json" onChange={e => restoreBackup(e.target.files?.[0])}/></label></div>{backupStatus && <span className="backup-status">{backupStatus}</span>}</div></div><div className="setting-card"><span className="hero-icon blue-bg">✓</span><div><h3>Urdu SMS templates enabled</h3><p>Messages open in your default SMS handler. On Windows, make sure Phone Link is configured as the app for SMS links.</p></div></div></div></section>}
     </main>
 
     {contactPrompt && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="contact-title"><form className="modal" onSubmit={confirmPhone}><button type="button" className="close" onClick={() => setContactPrompt(false)}>×</button><span className="hero-icon blue-bg">♙</span><p className="eyebrow blue">ONE-TIME SETUP</p><h2 id="contact-title">Enter contact number</h2><p>Add the number for <b>{receiver}</b>. We&apos;ll save it on this device.</p><label>Contact Number <i>*</i><input autoFocus type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={phone} onChange={e => { setPhone(e.target.value); setPhoneError(""); }}/>{phoneError && <span className="error">{phoneError}</span>}</label><button className="primary" type="submit">Save & Continue <span>→</span></button></form></div>}
