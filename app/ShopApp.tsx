@@ -167,6 +167,7 @@ export default function ShopApp() {
   const filtered = useMemo(() => payments.filter(p => `${p.receiver} ${p.note} ${p.amount}`.toLowerCase().includes(search.toLowerCase())), [payments, search]);
   const receivers = settings.receiverNames;
   const ownerPhone = contacts.__owner ?? contacts[receivers[0]] ?? "";
+  const lastPayment = payments[0];
 
   function savePayments(next: Payment[]) {
     setPayments(next);
@@ -297,22 +298,26 @@ export default function ShopApp() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <button className="brand" onClick={() => setView("dashboard")}><span className="brand-mark">⌁</span><span>{settings.shopName}</span></button>
+      <button className="brand" onClick={() => setView("dashboard")}><span className="brand-printer">▤</span><span>{settings.shopName}</span></button>
       <nav>{nav.map(([id, ico, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon>{ico}</Icon>{label}</button>)}</nav>
-      <div className="summary"><span>Today&apos;s Summary</span><b>Rs. {totalToday.toLocaleString()}</b><small>{payments.filter(p => new Date(p.createdAt).toDateString() === now.toDateString()).length} transactions</small></div>
+      <div className="summary"><div className="summary-title"><b>Today&apos;s Summary</b><span>▣</span></div><small>Total Payments</small><strong>Rs. {totalToday.toLocaleString()}</strong><hr/><small>Transactions</small><strong>{payments.filter(p => new Date(p.createdAt).toDateString() === now.toDateString()).length}</strong><hr/><small>Last Payment</small><strong>{lastPayment ? `Rs. ${lastPayment.amount.toLocaleString()} to ${lastPayment.receiver}` : "No payments yet"}</strong>{lastPayment && <small>{formatDate(lastPayment.createdAt)} - {formatTime(lastPayment.createdAt)}</small>}</div>
+      <button className="sidebar-logout" onClick={logout}><Icon>⇥</Icon>Logout</button>
     </aside>
 
     <main>
-      <header><button className="menu" aria-label="Menu">☰</button><div><p className="eyebrow">PHOTOSTAT & PRINTING SHOP</p><h1>{nav.find(n => n[0] === view)?.[2]}</h1></div><div className="clock"><b>{formatTime(now.toISOString())}</b><span>{formatDate(now.toISOString())}</span></div><div className="account"><span className="avatar">A</span><span className="account-copy"><b>Shop Admin</b><small>Signed in locally</small></span><button type="button" className="logout" onClick={logout}>Log out</button></div></header>
+      <header><button className="menu" aria-label="Menu">☰</button><div className="header-heading"><h1>{nav.find(n => n[0] === view)?.[2]}</h1><p>{view === "dashboard" ? "Welcome! Manage payments and notifications easily." : "Manage your shop records easily."}</p></div><div className="header-meta"><span className="header-item"><i>◷</i>{formatTime(now.toISOString())}</span><span className="header-item"><i>▣</i>{formatDate(now.toISOString())}</span><button className="profile-button" aria-label="Account">♟⌄</button></div></header>
 
-      {view === "dashboard" && <section className="content dashboard">
-        <div className="welcome"><div><p className="eyebrow blue">DAILY OPERATIONS</p><h2>Everything you need,<br/><em>right at hand.</em></h2><p>Record electricity payments and notify customers in just a few clicks.</p></div><div className="date-chip"><span>{now.toLocaleDateString("en-PK", { weekday: "long" })}</span><strong>{now.getDate()}</strong><small>{now.toLocaleDateString("en-PK", { month: "long", year: "numeric" })}</small></div></div>
+      {view === "dashboard" && <section className="content dashboard reference-dashboard">
         <div className="action-grid">
-          <button className="action-card blue-card" onClick={() => setView("payment")}><Icon>ϟ</Icon><div><h3>Electricity Payment</h3><p>Record a payment and send confirmation</p><span>Start payment →</span></div></button>
-          <button className="action-card green-card" onClick={() => setView("domicile")}><Icon>✓</Icon><div><h3>Domicile Notification</h3><p>Tell a customer their document is ready</p><span>Send notification →</span></div></button>
+          <article className="action-card blue-card"><span className="round-action-icon">ϟ</span><div><h3>Electricity Payment</h3><p>Record electricity payments and<br/>send confirmation instantly.</p><button onClick={() => setView("payment")}>＋ &nbsp; New Payment</button></div></article>
+          <article className="action-card green-card"><span className="round-action-icon">▤</span><div><h3>Domicile Notification</h3><p>Send domicile ready notifications<br/>to your customers.</p><button onClick={() => setView("domicile")}>＋ &nbsp; Send Notification</button></div></article>
         </div>
-        <div className="stats"><article><span className="stat-icon blue-bg">₨</span><div><small>Paid Today</small><b>Rs. {totalToday.toLocaleString()}</b></div></article><article><span className="stat-icon green-bg">▦</span><div><small>This Month</small><b>Rs. {totalMonth.toLocaleString()}</b></div></article><article><span className="stat-icon amber-bg">↗</span><div><small>Total Records</small><b>{payments.length}</b></div></article></div>
-        <div className="panel recent"><div className="panel-title"><div><h3>Recent Payments</h3><p>Your latest electricity payment records</p></div><button onClick={() => setView("history")}>View all →</button></div><PaymentTable payments={payments.slice(0, 4)} loading={loading}/></div>
+        <div className="dashboard-middle">
+          <div className="panel recent"><div className="panel-title"><h3>Recent Payments</h3><button onClick={() => setView("history")}>View All</button></div><PaymentTable payments={payments.slice(0, 2)} loading={loading}/><button className="view-payments" onClick={() => setView("history")}>View all payments &nbsp; →</button></div>
+          <div className="panel month-overview"><h3>This Month Overview</h3><div><span className="overview-icon green-bg">▣</span><p>Total Payments</p><b className="green-text">Rs. {totalMonth.toLocaleString()}</b></div><div><span className="overview-icon amber-bg">⇄</span><p>Total Transactions</p><b className="orange-text">{payments.length}</b></div><div><span className="overview-icon purple-bg">▣</span><p>Last Payment</p><b className="purple-text">{lastPayment ? `${formatDate(lastPayment.createdAt)} - ${formatTime(lastPayment.createdAt)}` : "—"}</b></div></div>
+        </div>
+        <div className="dashboard-stats"><article className="blue-stat"><span>ϟ</span><div><small>Total Payments</small><b>Rs. {totalToday.toLocaleString()}</b></div><p>Today&apos;s total payments</p></article><article className="green-stat"><span>▣</span><div><small>This Month</small><b>Rs. {totalMonth.toLocaleString()}</b></div><p>Payments this month</p></article><article className="purple-stat"><span>⇄</span><div><small>Total Transactions</small><b>{payments.length}</b></div><p>All transactions</p></article><article className="orange-stat"><span>♟</span><div><small>Saved Contacts</small><b>{ownerPhone ? 1 : 0}</b></div><p>Saved in contacts</p></article></div>
+        <div className="dashboard-tip"><span>ⓘ</span><b>Tip:</b> Record payments daily to keep accurate records and avoid any confusion.</div>
       </section>}
 
       {view === "payment" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="form-intro"><span className="hero-icon blue-bg">ϟ</span><p className="eyebrow blue">PAYMENT RECORD</p><h2>Electricity Payment</h2><p>Record who received the money and send instant proof.</p></div><form className="panel form-card" onSubmit={submitPayment}>
