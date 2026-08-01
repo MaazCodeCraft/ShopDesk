@@ -330,7 +330,7 @@ export default function ShopApp() {
 
       {view === "domicile" && <section className="content narrow"><Back onClick={() => setView("dashboard")}/><div className="form-intro green"><span className="hero-icon green-bg">✓</span><p className="eyebrow">CUSTOMER UPDATE</p><h2>Domicile Notification</h2><p>Let a customer know their certificate is ready.</p></div><form className="panel form-card" onSubmit={sendDomicile}>
         <label>Customer Contact Number <i>*</i><input type="tel" inputMode="tel" placeholder="03XX XXXXXXX" value={domicilePhone} onChange={e => { setDomicilePhone(e.target.value); setDomicileError(""); }}/>{domicileError && <span className="error">{domicileError}</span>}</label>
-        <div className="message-preview" dir="rtl"><small>پیغام کا پیش نظارہ</small><p>السلام علیکم، آپ کا <b>ڈومیسائل</b> تیار ہو چکا ہے۔ براہِ کرم ہماری دکان پر تشریف لا کر وصول کریں۔ شکریہ۔</p></div>
+        <div className="message-preview" dir="rtl" lang="ur"><small>پیغام کا پیش نظارہ</small><p>السلام علیکم، آپ کا <b>ڈومیسائل</b> تیار ہو چکا ہے۔ براہِ کرم ہماری دکان پر تشریف لا کر وصول کریں۔ شکریہ۔</p></div>
         <button className="primary green-button" type="submit">Send Notification <span>↗</span></button>
       </form></section>}
 
@@ -355,8 +355,8 @@ export default function ShopApp() {
             <h3>Shop details</h3><div className="settings-grid"><label>Shop name<input value={settings.shopName} onChange={e => saveSettings({...settings, shopName:e.target.value})}/></label><label>Daily electricity rate (Rs.)<input type="number" min="1" value={settings.dailyRate} onChange={e => saveSettings({...settings, dailyRate:Number(e.target.value) || 0})}/></label></div>
             <h3>Receiver names</h3><div className="settings-grid">{settings.receiverNames.map((name,index)=><label key={index}>{index===0?"Owner":"Son "+index}<input value={name} onChange={e=>{const names=[...settings.receiverNames];names[index]=e.target.value;saveSettings({...settings,receiverNames:names})}}/></label>)}</div>
             <h3>Urdu SMS templates</h3><p className="template-help">Payment placeholders: <code>{'{amount}'}</code> <code>{'{receiver}'}</code> <code>{'{date}'}</code> <code>{'{time}'}</code> <code>{'{note}'}</code> <code>{'{shop}'}</code></p>
-            <label>Payment confirmation SMS<textarea dir="rtl" rows={9} value={settings.paymentSms} onChange={e=>saveSettings({...settings,paymentSms:e.target.value})}/></label>
-            <p className="template-help">Domicile placeholder: <code>{'{shop}'}</code></p><label>Domicile notification SMS<textarea dir="rtl" rows={7} value={settings.domicileSms} onChange={e=>saveSettings({...settings,domicileSms:e.target.value})}/></label>
+            <label>Payment confirmation SMS<textarea dir="rtl" lang="ur" rows={9} value={settings.paymentSms} onChange={e=>saveSettings({...settings,paymentSms:e.target.value})}/></label>
+            <p className="template-help">Domicile placeholder: <code>{'{shop}'}</code></p><label>Domicile notification SMS<textarea dir="rtl" lang="ur" rows={7} value={settings.domicileSms} onChange={e=>saveSettings({...settings,domicileSms:e.target.value})}/></label>
             <button className="secondary reset-button" onClick={()=>saveSettings(defaultSettings)}>Restore default settings</button>
           </div></div>
         </div>
